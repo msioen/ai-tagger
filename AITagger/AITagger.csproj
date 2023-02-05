@@ -6,4 +6,71 @@
 		<OutputType>Exe</OutputType>
 		<SupportedOSPlatformVersion>12.3</SupportedOSPlatformVersion>
 	</PropertyGroup>
+	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+	  <EnableCodeSigning>false</EnableCodeSigning>
+	  <CreatePackage>false</CreatePackage>
+	  <UseSGen>false</UseSGen>
+	</PropertyGroup>
+	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+	  <EnableCodeSigning>false</EnableCodeSigning>
+	  <CreatePackage>false</CreatePackage>
+	  <UseSGen>false</UseSGen>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Azure.CognitiveServices.Vision.ComputerVision" Version="7.0.1" />
+		<PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
+	</ItemGroup>
+	<ItemGroup>
+	  <None Remove="Utils\" />
+	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="Utils\" />
+	</ItemGroup>
+	<ItemGroup>
+	  <ImageAsset Update="Assets.xcassets\Contents.json">
+	    <Link>Assets.xcassets\Contents.json</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\StatusBarIcon.imageset\brain-white-16.png">
+	    <Link>Assets.xcassets\StatusBarIcon.imageset\brain-white-16.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\StatusBarIcon.imageset\Contents.json">
+	    <Link>Assets.xcassets\StatusBarIcon.imageset\Contents.json</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\StatusBarIcon.imageset\brain-white-32.png">
+	    <Link>Assets.xcassets\StatusBarIcon.imageset\brain-white-32.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\AppIcon-512%402x.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\AppIcon-512%402x.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-16.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-16.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-1.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-1.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-128.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-128.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-64.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-64.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-257.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-257.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-256.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-256.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\Contents.json">
+	    <Link>Assets.xcassets\AppIcon.appiconset\Contents.json</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-32.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-32.png</Link>
+	  </ImageAsset>
+	  <ImageAsset Update="Assets.xcassets\AppIcon.appiconset\brain-colored-33.png">
+	    <Link>Assets.xcassets\AppIcon.appiconset\brain-colored-33.png</Link>
+	  </ImageAsset>
+	</ItemGroup>
 </Project>
