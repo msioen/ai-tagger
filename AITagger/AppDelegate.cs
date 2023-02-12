@@ -22,6 +22,7 @@ namespace AITagger
         private static readonly string _visionEndpoint = "ENDPOINT";
 
         private static readonly string _donutEndpoint = "http://localhost:55001";
+        private static readonly string _donutKey = "";
 
         private const string XATTR_FILE_TAGS = "com.apple.metadata:_kMDItemUserTags";
         private const string XATTR_AITAGGER_HANDLED = "be.michielsioen.AITagger:HandledAt";
@@ -205,12 +206,14 @@ namespace AITagger
 
         private async Task<DonutResponse> ExecuteDonutRvlCdip(DirectorySettings dirSettings, string filePath)
         {
-            // TODO - figure out authentication
-            // for demo 'fake' data? so it's speedy?
-
             try
             {
                 var client = new HttpClient();
+
+                if (!string.IsNullOrWhiteSpace(_donutKey))
+                {
+                    client.DefaultRequestHeaders.Add("Authorization", $"Bearer: {_donutKey}");
+                }
 
                 var url = $"{_donutEndpoint}/score";
 
