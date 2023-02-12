@@ -1,15 +1,15 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
-name: pip-in-dockerfile
-endpoint_name: {{ENDPOINT_NAME}}
+name: conda-in-dockerfile
+endpoint_name: donut-rvlcdip
 model: 
   name: minimal-cc-model 
-  path: ../../../../model-1/model
+  path: ../asset/model
 code_configuration: 
-  code: ../../../../model-1/onlinescoring
+  code: ../asset/onlinescoring
   scoring_script: score.py
 environment:  
-  name: pip-in-dockerfile
-  image: {{ACR_NAME}}.azurecr.io/azureml-examples/minimal-single-model-pip-in-dockerfile:1
+  name: conda-in-dockerfile
+  image: crazureai.azurecr.io/azure-ai-experiments/azure-donut-base-finetuned-rvlcdip:1
   inference_config:
     liveness_route:
       path: /
@@ -20,5 +20,7 @@ environment:
     scoring_route:
       path: /score
       port: 5001
-instance_type: Standard_DS3_v2
+instance_type: Standard_DS4_v2
 instance_count: 1
+request_settings:
+  request_timeout_ms: 60000
