@@ -1,0 +1,4 @@
+[submodule "ml-endpoint/asset/model/donut-base-finetuned-rvlcdip"]
+	path = ml-endpoint/asset/model/donut-base-finetuned-rvlcdip
+	url = https://huggingface.co/naver-clova-ix/donut-base-finetuned-rvlcdip
+	branch = official

@@ -19,12 +19,16 @@
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Azure.CognitiveServices.Vision.ComputerVision" Version="7.0.1" />
 		<PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
 	</ItemGroup>
 	<ItemGroup>
 	  <None Remove="Utils\" />
+	  <None Remove="Model\" />
+	  <None Remove="Newtonsoft.Json" />
 	</ItemGroup>
 	<ItemGroup>
 	  <Folder Include="Utils\" />
+	  <Folder Include="Model\" />
 	</ItemGroup>
 	<ItemGroup>
 	  <ImageAsset Update="Assets.xcassets\Contents.json">

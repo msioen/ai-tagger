@@ -2,15 +2,16 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using AITagger.Utils;
+using AITagger.Model;
 using AppKit;
+using CoreServices;
 using Foundation;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision.Models;
-using ObjCRuntime;
-using ThreadNetwork;
+using Newtonsoft.Json;
 
 namespace AITagger
 {
@@ -20,59 +21,259 @@ namespace AITagger
         private static readonly string _visionSubscriptionKey = "SUBSCRIPTION_KEY";
         private static readonly string _visionEndpoint = "ENDPOINT";
 
-        private static readonly int _maxTagCount = 3;
+        private static readonly string _donutEndpoint = "http://localhost:55001";
 
-        private readonly NSStatusItem _statusItem = NSStatusBar.SystemStatusBar.CreateStatusItem(NSStatusItemLength.Square);
+        private const string XATTR_FILE_TAGS = "com.apple.metadata:_kMDItemUserTags";
+        private const string XATTR_AITAGGER_HANDLED = "be.michielsioen.AITagger:HandledAt";
+
+        private readonly NSStatusItem _statusItem = NSStatusBar.SystemStatusBar.CreateStatusItem(NSStatusItemLength.Variable);
+
+        private readonly AITaggerSettings _settings;
+        private readonly List<DirectorySettings> _directories;
+
+        private FSEventStream _eventStream;
+
+        private Queue<string> _filesToHandle = new Queue<string>();
+        private bool _handlingFile;
+
+        private Timer _animationTimer;
+
+        private const int _iconAnimationFrameTotal = 30;
+        private int _iconAnimcationCurrFrame = 1;
 
         public AppDelegate()
         {
+            // TODO - manage through UI/settings instead of manual model
+
+            _settings = new AITaggerSettings()
+            {
+                AutoTaggingEnabled = true,
+                MaxTagCount = 3,
+                IgnoredTags = new List<string> { "text", "font", "line", "number" },
+                FileExtensionsToTag = new List<string> { ".png", ".PNG", ".jpg", ".JPG", ".jpeg", ".JPEG" },
+                AnimateMenuBar = true,
+                ShowCountInMenuBar = true,
+            };
+
+            _directories = new List<DirectorySettings>()
+            {
+                new DirectorySettings()
+                {
+                    Path = "/Users/michielsioen/Desktop/screenshots",
+                    IgnoredTags = new List<string>()
+                }
+            };
         }
 
         public override void DidFinishLaunching(NSNotification notification)
         {
             // setup menu
             _statusItem.Button.Image = NSImage.ImageNamed("StatusBarIcon");
+            _statusItem.Button.ImagePosition = NSCellImagePosition.ImageLeft;
 
-            var menu = new NSMenu();
+            //var menu = new NSMenu();
 
-            var testItem = new NSMenuItem("Analyse File", OnAnalyseFile);
-            menu.AddItem(testItem);
+            //var testItem = new NSMenuItem("Analyse File", OnAnalyseFile);
+            //menu.AddItem(testItem);
 
-            _statusItem.Menu = menu;
+            //_statusItem.Menu = menu;
+
+            // start listening to new events
+            InitializeFSEventStream();
+
+            // todo - validate if we should action on old files/events as well
         }
 
         public override void WillTerminate(NSNotification notification)
         {
         }
 
-        private async Task HandleImage(ComputerVisionClient client, string filePath)
+        private void InitializeFSEventStream()
         {
-            var toChangeFilePath = filePath;
+            if (_eventStream != null)
+            {
+                _eventStream.Events -= FSEventStream_Events;
+                _eventStream.Dispose();
+                _eventStream = null;
+            }
 
+            if (_settings.AutoTaggingEnabled && _directories.Count > 0)
+            {
+                var pathsToWatch = _directories.Select(x => x.Path).ToArray();
+                _eventStream = new FSEventStream(pathsToWatch, TimeSpan.FromMilliseconds(250), FSEventStreamCreateFlags.FileEvents);
+                _eventStream.Events += FSEventStream_Events;
 
-            // TODO validate image: type / ... min size / ...
+                _eventStream.ScheduleWithRunLoop(NSRunLoop.Current);
+                _eventStream.Start();
+            }
+        }
 
-            // TODO make a local copy
-            // TODO resize local copy for our purposes
+        private void FSEventStream_Events(object sender, FSEventStreamEventsArgs args)
+        {
+            // screenshots are initially created with different filename => ensure to also trigger on rename
 
-            // tag/scan/execute
-            // possibly other actions like OCR / other data sources to combine in calculation?
-            var imageAnalysis = await AnalyseImage(client, toChangeFilePath);
-            var imageResults = GetImageContents(imageAnalysis);
+            foreach (var ev in args.Events)
+            {
+                if ((ev.Flags.HasFlag(FSEventStreamEventFlags.ItemCreated) || ev.Flags.HasFlag(FSEventStreamEventFlags.ItemRenamed)) &&
+                    ev.Flags.HasFlag(FSEventStreamEventFlags.ItemIsFile) &&
+                    _settings.FileExtensionsToTag.Contains(Path.GetExtension(ev.Path)) &&
+                    !Path.GetFileName(ev.Path).StartsWith('.'))
+                {
+                    _filesToHandle.Enqueue(ev.Path);
+                }
+            }
 
-            // apply results
+            HandleFilesQueue();
+        }
 
-            // show notification (debug purposes - instead of writing tags)
-            var notification = $"Caption: {imageResults.Captions.FirstOrDefault()}{Environment.NewLine}Tags: {string.Join(", ", imageResults.Tags)}";
-            NotificationService.Instance.ShowNotification("Image Analysis Results", notification);
+        private async void HandleFilesQueue()
+        {
+            if (_settings.ShowCountInMenuBar)
+            {
+                var count = _filesToHandle.Count;
+                if (_handlingFile) count++;
+                _statusItem.Button.Title = count > 0 ? count.ToString() : string.Empty;
+            }
 
-            // add tags to file (overwrites current tags)
-            //var userTags = new NSMutableArray();
-            //foreach(var tag in imageResults.Tags)
-            //{
-            //    userTags.Add((NSString)tag);
-            //}
-            //WriteUserTags(toChangeFilePath, userTags, out var writeError);
+            if (_handlingFile || _filesToHandle.Count == 0)
+                return;
+
+            _handlingFile = true;
+            StartIconAnimation();
+
+            try
+            {
+                var file = _filesToHandle.Dequeue();
+
+                if (File.Exists(file) && ReadAITaggerHandledAt(file) == null)
+                {
+                    var dirSettings = _directories.FirstOrDefault(x => file.StartsWith(x.Path));
+                    await HandleImage(dirSettings, file);
+                }
+            }
+            catch { }
+            finally
+            {
+                _handlingFile = false;
+                StopIconAnimation();
+            }
+
+            HandleFilesQueue();
+        }
+
+        private async Task HandleImage(DirectorySettings dirSettings, string filePath)
+        {
+            try
+            {
+                // 1. prep file (copy / resize)
+                // TODO validate image: type / ... min size / ... (?)
+                // TODO make a local copy
+                // TODO resize local copy for our purposes
+
+                // 2a. get donut info
+                var donutTask = ExecuteDonutRvlCdip(dirSettings, filePath);
+
+                // 2b. get azure ai info
+                var azureTask = ExecuteAzureVision(dirSettings, filePath);
+
+                await Task.WhenAll(donutTask, azureTask);
+
+                // 3. apply tags
+                var userTags = new NSMutableArray();
+                if (donutTask.Result != null && !string.IsNullOrEmpty(donutTask.Result.Class))
+                {
+                    userTags.Add((NSString)donutTask.Result.Class);
+                }
+                foreach (var tag in azureTask.Result.Tags.Take(_settings.MaxTagCount - 1))
+                {
+                    userTags.Add((NSString)tag);
+                }
+                WriteUserTags(filePath, userTags, out var writeError);
+            }
+            catch { }
+
+            try
+            {
+                // 4. apply metadata => mark as handled even if something failed above
+                WriteAITaggerHandledAt(filePath);
+
+                // 5. cleanup prep
+                // TODO remove local copy
+            }
+            catch { }
+        }
+
+        private async Task<DonutResponse> ExecuteDonutRvlCdip(DirectorySettings dirSettings, string filePath)
+        {
+            // TODO - figure out authentication
+            // for demo 'fake' data? so it's speedy?
+
+            try
+            {
+                var client = new HttpClient();
+
+                var url = $"{_donutEndpoint}/score";
+
+                var bytes = File.ReadAllBytes(filePath);
+
+                var requestContent = new MultipartFormDataContent
+                {
+                    { new ByteArrayContent(bytes), "image", filePath }
+                };
+
+                var response = await client.PostAsync(url, requestContent);
+                var responseContent = await response.Content.ReadAsStringAsync();
+                return JsonConvert.DeserializeObject<DonutResponse>(responseContent);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task<ImageResults> ExecuteAzureVision(DirectorySettings dirSettings, string filePath)
+        {
+            var client = new ComputerVisionClient(new ApiKeyServiceClientCredentials(_visionSubscriptionKey))
+            {
+                Endpoint = _visionEndpoint
+            };
+
+            var imageAnalysis = await AnalyseImage(client, filePath);
+            return GetImageContents(dirSettings, imageAnalysis);
+        }
+
+        private void StartIconAnimation()
+        {
+            if (_animationTimer != null)
+            {
+                StopIconAnimation();
+            }
+            if (!_settings.AnimateMenuBar)
+            {
+                return;
+            }
+
+            _animationTimer = new Timer(OnTimerTick, null, 40, 40);
+        }
+
+        private void OnTimerTick(object state)
+        {
+            InvokeOnMainThread(() => _statusItem.Button.Image = NSImage.ImageNamed($"frame-{_iconAnimcationCurrFrame}"));
+
+            _iconAnimcationCurrFrame++;
+            if (_iconAnimcationCurrFrame > _iconAnimationFrameTotal)
+                _iconAnimcationCurrFrame = 1;
+        }
+
+        private void StopIconAnimation()
+        {
+            if (_animationTimer != null)
+            {
+                _animationTimer.Dispose();
+                _animationTimer = null;
+            }
+
+            _statusItem.Button.Image = NSImage.ImageNamed("StatusBarIcon");
         }
 
         private async Task<ImageAnalysis> AnalyseImage(ComputerVisionClient client, string filePath)
@@ -102,7 +303,7 @@ namespace AITagger
             }
         }
 
-        private ImageResults GetImageContents(ImageAnalysis imageAnalysis)
+        private ImageResults GetImageContents(DirectorySettings directorysettings, ImageAnalysis imageAnalysis)
         {
             var imageResults = new ImageResults();
 
@@ -110,7 +311,7 @@ namespace AITagger
             if (imageAnalysis.Description?.Captions != null)
             {
                 // TODO - can we get something sensible/useful in a 'max' filename length?
-                foreach(var caption in imageAnalysis.Description.Captions.OrderByDescending(x => x.Confidence))
+                foreach (var caption in imageAnalysis.Description.Captions.OrderByDescending(x => x.Confidence))
                 {
                     imageResults.Captions.Add(caption.Text);
                 }
@@ -119,13 +320,10 @@ namespace AITagger
             // Tags contains items detected in the image with a confidence rating
             if (imageAnalysis.Tags != null)
             {
-                // TODO - in future depending on settings/folder/...
-                string[] ignoredTags = new string[] { "text", "font", "line", "number" };
-
-                foreach(var tag in imageAnalysis.Tags
-                    .Where(x => !ignoredTags.Contains(x.Name))
-                    .OrderByDescending(x => x.Confidence)
-                    .Take(_maxTagCount))
+                foreach (var tag in imageAnalysis.Tags
+                    .Where(x => !_settings.IgnoredTags.Contains(x.Name))
+                    .Where(x => !directorysettings?.IgnoredTags?.Contains(x.Name) ?? true)
+                    .OrderByDescending(x => x.Confidence))
                 {
                     imageResults.Tags.Add(tag.Name);
                 }
@@ -134,9 +332,34 @@ namespace AITagger
             return imageResults;
         }
 
+        private DateTime? ReadAITaggerHandledAt(string filePath)
+        {
+            try
+            {
+                Mono.Unix.Native.Syscall.getxattr(filePath, XATTR_AITAGGER_HANDLED, out var value);
+                if (value == null)
+                {
+                    return null;
+                }
+
+                var now = BitConverter.ToInt64(value);
+                return DateTime.FromBinary(now);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void WriteAITaggerHandledAt(string filePath)
+        {
+            var now = BitConverter.GetBytes(DateTime.Now.ToBinary());
+            Mono.Unix.Native.Syscall.setxattr(filePath, XATTR_AITAGGER_HANDLED, now);
+        }
+
         private NSMutableArray ReadUserTags(string filePath, out NSError error)
         {
-            Mono.Unix.Native.Syscall.getxattr(filePath, "com.apple.metadata:_kMDItemUserTags", out var value);
+            Mono.Unix.Native.Syscall.getxattr(filePath, XATTR_FILE_TAGS, out var value);
             return BinaryPListToArray(value, out error);
         }
 
@@ -153,205 +376,7 @@ namespace AITagger
             var data = NSPropertyListSerialization.DataWithPropertyList(userTags, NSPropertyListFormat.Binary, out error);
             var plist = data.ToArray();
 
-            Mono.Unix.Native.Syscall.setxattr(filePath, "com.apple.metadata:_kMDItemUserTags", plist);
+            Mono.Unix.Native.Syscall.setxattr(filePath, XATTR_FILE_TAGS, plist);
         }
-
-        private async void OnAnalyseFile(object sender, EventArgs e)
-        {
-            var openPanel = new NSOpenPanel();
-            openPanel.CanChooseDirectories = false;
-            openPanel.CanChooseFiles = true;
-            openPanel.RunModal();
-
-            if (openPanel.Urls == null || openPanel.Urls.Length <= 0)
-            {
-                return;
-            }
-
-            var filePath = openPanel.Urls.FirstOrDefault()?.Path;
-
-            var client = new ComputerVisionClient(new ApiKeyServiceClientCredentials(_visionSubscriptionKey))
-            {
-                Endpoint = _visionEndpoint
-            };
-
-            await HandleImage(client, filePath);
-
-            //await AnalyzeImageLocal(client, testFile);
-            //await ReadFileLocal(client, testFile);
-        }
-
-        private static async Task AnalyzeImageLocal(ComputerVisionClient client, string localImage)
-        {
-            Console.WriteLine("----------------------------------------------------------");
-            Console.WriteLine("ANALYZE IMAGE - LOCAL IMAGE");
-            Console.WriteLine();
-
-            // Creating a list that defines the features to be extracted from the image. 
-            List<VisualFeatureTypes?> features = new List<VisualFeatureTypes?>()
-            {
-                VisualFeatureTypes.Categories, VisualFeatureTypes.Description,
-                VisualFeatureTypes.Faces, VisualFeatureTypes.Tags,
-                VisualFeatureTypes.Brands, VisualFeatureTypes.Objects
-            };
-
-            Console.WriteLine($"Analyzing the local image {Path.GetFileName(localImage)}...");
-            Console.WriteLine();
-
-            using (Stream analyzeImageStream = File.OpenRead(localImage))
-            {
-                // Analyze the local image.
-                ImageAnalysis results = await client.AnalyzeImageInStreamAsync(analyzeImageStream, visualFeatures: features);
-
-                // Sunmarizes the image content.
-                if (null != results.Description && null != results.Description.Captions)
-                {
-                    Console.WriteLine("Summary:");
-                    foreach (var caption in results.Description.Captions)
-                    {
-                        Console.WriteLine($"{caption.Text} with confidence {caption.Confidence}");
-                    }
-                    Console.WriteLine();
-                }
-
-                // Display categories the image is divided into.
-                Console.WriteLine("Categories:");
-                foreach (var category in results.Categories)
-                {
-                    Console.WriteLine($"{category.Name} with confidence {category.Score}");
-                }
-                Console.WriteLine();
-
-                // Image tags and their confidence score
-                if (null != results.Tags)
-                {
-                    Console.WriteLine("Tags:");
-                    foreach (var tag in results.Tags)
-                    {
-                        Console.WriteLine($"{tag.Name} {tag.Confidence}");
-                    }
-                    Console.WriteLine();
-                }
-
-                // Objects
-                if (null != results.Objects)
-                {
-                    Console.WriteLine("Objects:");
-                    foreach (var obj in results.Objects)
-                    {
-                        Console.WriteLine($"{obj.ObjectProperty} with confidence {obj.Confidence} at location {obj.Rectangle.X}, " +
-                          $"{obj.Rectangle.X + obj.Rectangle.W}, {obj.Rectangle.Y}, {obj.Rectangle.Y + obj.Rectangle.H}");
-                    }
-                    Console.WriteLine();
-                }
-
-                // Detected faces, if any.
-                // interesting? objects also detects persons
-                if (null != results.Faces)
-                {
-                    Console.WriteLine("Faces:");
-                    foreach (var face in results.Faces)
-                    {
-                        Console.WriteLine($"A {face.Gender} of age {face.Age} at location {face.FaceRectangle.Left}, {face.FaceRectangle.Top}, " +
-                          $"{face.FaceRectangle.Left + face.FaceRectangle.Width}, {face.FaceRectangle.Top + face.FaceRectangle.Height}");
-                    }
-                    Console.WriteLine();
-                }
-
-                // Well-known brands, if any.
-                if (null != results.Brands)
-                {
-                    Console.WriteLine("Brands:");
-                    foreach (var brand in results.Brands)
-                    {
-                        Console.WriteLine($"Logo of {brand.Name} with confidence {brand.Confidence} at location {brand.Rectangle.X}, " +
-                          $"{brand.Rectangle.X + brand.Rectangle.W}, {brand.Rectangle.Y}, {brand.Rectangle.Y + brand.Rectangle.H}");
-                    }
-                    Console.WriteLine();
-                }
-
-                // Celebrities in image, if any.
-                if (null != results.Categories)
-                {
-                    Console.WriteLine("Celebrities:");
-                    foreach (var category in results.Categories)
-                    {
-                        if (category.Detail?.Celebrities != null)
-                        {
-                            foreach (var celeb in category.Detail.Celebrities)
-                            {
-                                Console.WriteLine($"{celeb.Name} with confidence {celeb.Confidence} at location {celeb.FaceRectangle.Left}, " +
-                                  $"{celeb.FaceRectangle.Top},{celeb.FaceRectangle.Height},{celeb.FaceRectangle.Width}");
-                            }
-                        }
-                    }
-                    Console.WriteLine();
-                }
-
-                // Popular landmarks in image, if any.
-                if (null != results.Categories)
-                {
-                    Console.WriteLine("Landmarks:");
-                    foreach (var category in results.Categories)
-                    {
-                        if (category.Detail?.Landmarks != null)
-                        {
-                            foreach (var landmark in category.Detail.Landmarks)
-                            {
-                                Console.WriteLine($"{landmark.Name} with confidence {landmark.Confidence}");
-                            }
-                        }
-                    }
-                    Console.WriteLine();
-                }
-            }
-        }
-
-        private static async Task ReadFileLocal(ComputerVisionClient client, string localFile)
-        {
-            Console.WriteLine("----------------------------------------------------------");
-            Console.WriteLine("READ FILE FROM LOCAL");
-            Console.WriteLine();
-
-            // Read text from URL
-            var textHeaders = await client.ReadInStreamAsync(File.OpenRead(localFile));
-            // After the request, get the operation location (operation ID)
-            string operationLocation = textHeaders.OperationLocation;
-            Thread.Sleep(2000);
-
-            // <snippet_extract_response>
-            // Retrieve the URI where the recognized text will be stored from the Operation-Location header.
-            // We only need the ID and not the full URL
-            const int numberOfCharsInOperationId = 36;
-            string operationId = operationLocation.Substring(operationLocation.Length - numberOfCharsInOperationId);
-
-            // Extract the text
-            ReadOperationResult results;
-            Console.WriteLine($"Reading text from local file {Path.GetFileName(localFile)}...");
-            Console.WriteLine();
-            do
-            {
-                results = await client.GetReadResultAsync(Guid.Parse(operationId));
-            }
-            while ((results.Status == OperationStatusCodes.Running ||
-                results.Status == OperationStatusCodes.NotStarted));
-            // </snippet_extract_response>
-
-            // <snippet_extract_display>
-            // Display the found text.
-            Console.WriteLine();
-            var textUrlFileResults = results.AnalyzeResult.ReadResults;
-            foreach (ReadResult page in textUrlFileResults)
-            {
-                foreach (Line line in page.Lines)
-                {
-                    Console.WriteLine(line.Text);
-                }
-            }
-            Console.WriteLine();
-        }
-
-
     }
 }
-

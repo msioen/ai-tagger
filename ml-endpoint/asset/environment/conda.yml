@@ -1,0 +1,11 @@
+name: donut-rvlcdip
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7
+  - numpy=1.21.2
+  - pip=21.2.4
+  - pip:
+    - azureml-defaults==1.47.0
+    - donut-python==1.0.9
+    - transformers==4.25.1
