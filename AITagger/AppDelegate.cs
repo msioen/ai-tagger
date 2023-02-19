@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AITagger.Model;
 using AppKit;
+using CoreGraphics;
 using CoreServices;
 using Foundation;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision;
@@ -72,13 +73,10 @@ namespace AITagger
             _statusItem.Button.Image = NSImage.ImageNamed("StatusBarIcon");
             _statusItem.Button.ImagePosition = NSCellImagePosition.ImageLeft;
 
-            //var menu = new NSMenu();
-
-            //var testItem = new NSMenuItem("Analyse File", OnAnalyseFile);
-            //menu.AddItem(testItem);
-
-            //_statusItem.Menu = menu;
-
+            var menu = new NSMenu();
+            menu.AddItem(new NSMenuItem("Quit", OnQuit));
+            _statusItem.Menu = menu;
+            
             // start listening to new events
             InitializeFSEventStream();
 
@@ -87,6 +85,11 @@ namespace AITagger
 
         public override void WillTerminate(NSNotification notification)
         {
+        }
+        
+        private void OnQuit(object sender, EventArgs e)
+        {
+            NSApplication.SharedApplication.Terminate(this);
         }
 
         private void InitializeFSEventStream()
@@ -164,21 +167,24 @@ namespace AITagger
 
         private async Task HandleImage(DirectorySettings dirSettings, string filePath)
         {
+            var workingFilePath = Path.GetTempPath() + Guid.NewGuid() + ".jpg";
+            
             try
             {
                 // 1. prep file (copy / resize)
-                // TODO validate image: type / ... min size / ... (?)
-                // TODO make a local copy
-                // TODO resize local copy for our purposes
+                if (!CreateWorkingFile(filePath, workingFilePath))
+                {
+                    return;
+                }
 
                 // 2a. get donut info
-                var donutTask = ExecuteDonutRvlCdip(dirSettings, filePath);
-
+                var donutTask = ExecuteDonutRvlCdip(dirSettings, workingFilePath);
+                
                 // 2b. get azure ai info
-                var azureTask = ExecuteAzureVision(dirSettings, filePath);
-
+                var azureTask = ExecuteAzureVision(dirSettings, workingFilePath);
+                
                 await Task.WhenAll(donutTask, azureTask);
-
+                
                 // 3. apply tags
                 var userTags = new NSMutableArray();
                 if (donutTask.Result != null && !string.IsNullOrEmpty(donutTask.Result.Class))
@@ -199,16 +205,68 @@ namespace AITagger
                 WriteAITaggerHandledAt(filePath);
 
                 // 5. cleanup prep
-                // TODO remove local copy
+                if (File.Exists(workingFilePath))
+                {
+                    File.Delete(workingFilePath);
+                }
             }
             catch { }
+        }
+
+        private bool CreateWorkingFile(string filePath, string workingFilePath)
+        {
+            try
+            {
+                const int targetSize = 244;
+                
+                var image = new NSImage(filePath);
+                var imageSize = image.Size;
+
+                var width = imageSize.Width;
+                var height = imageSize.Height;
+
+                if (width > targetSize && height > targetSize)
+                {
+                    if (width > height)
+                    {
+                        width = width / height * targetSize;
+                        height = targetSize;
+                    }
+                    else
+                    {
+                        height = height / width * targetSize;
+                        width = targetSize;
+                    }
+                }
+
+                var newSize = new CGSize(width, height);
+
+                var scaledImage = NSImage.ImageWithSize(newSize, false, (dstRect) =>
+                {
+                    image.Draw(dstRect);
+                    return true;
+                });
+
+                var imageRep = new NSBitmapImageRep(scaledImage.AsTiff());
+                var pngData = imageRep.RepresentationUsingTypeProperties(NSBitmapImageFileType.Jpeg, null);
+                pngData.Save(workingFilePath, false);
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private async Task<DonutResponse> ExecuteDonutRvlCdip(DirectorySettings dirSettings, string filePath)
         {
             try
             {
-                var client = new HttpClient();
+                var client = new HttpClient()
+                {
+                    Timeout = TimeSpan.FromMinutes(5)
+                };
 
                 if (!string.IsNullOrWhiteSpace(_donutKey))
                 {
