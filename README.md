@@ -11,6 +11,7 @@ AI Tagger is a macOS utility that can automatically tag images based on AI detec
 
 ### Setup source code and resources
 
+- Ensure the necessary mac bits are installed: `dotnet workload install macos`
 - Ensure to pull in the git submodule: `git submodule update --init --recursive`.
 - Pull down the lfs files: `git -C ml-endpoint/asset/model/donut-base-finetuned-rvlcdip lfs pull`
 - In Azure create a 'Computer vision' resource and update the endpoints and credentials in AITagger/AppDelegate.cs.

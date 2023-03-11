@@ -54,7 +54,7 @@ namespace AITagger
                 IgnoredTags = new List<string> { "text", "font", "line", "number" },
                 FileExtensionsToTag = new List<string> { ".png", ".PNG", ".jpg", ".JPG", ".jpeg", ".JPEG" },
                 AnimateMenuBar = true,
-                ShowCountInMenuBar = true,
+                ShowCountInMenuBar = false,
             };
 
             _directories = new List<DirectorySettings>()
